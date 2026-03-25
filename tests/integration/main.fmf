@@ -1,0 +1,10 @@
+summary: mockpod integration tests
+test: pytest -vvv --log-level DEBUG tests/integration
+duration: 30m
+require:
+  - mock
+  - createrepo_c
+  - rpmdevtools
+  - python3-pytest
+  - python3-click
+  - python3-pydantic

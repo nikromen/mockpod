@@ -1,0 +1,8 @@
+.git
+__pycache__
+*.pyc
+*.egg-info
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.mockpod

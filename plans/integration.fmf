@@ -1,0 +1,27 @@
+summary: Integration tests for mockpod
+discover:
+    how: fmf
+execute:
+    how: tmt
+provision:
+    how: virtual
+
+prepare:
+  - how: install
+    package:
+      - python3-pip
+      - python3-pytest
+      - python3-click
+      - python3-pydantic
+      - mock
+      - createrepo_c
+      - rpmdevtools
+  - how: shell
+    script: |
+      pip install .
+      usermod -a -G mock root
+
+discover:
+    how: fmf
+    test:
+      - /tests/integration

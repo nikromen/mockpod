@@ -1,0 +1,17 @@
+FROM fedora:latest
+
+RUN dnf install -y \
+    python3 \
+    python3-devel \
+    uv \
+    mock \
+    rpmdevtools \
+    createrepo_c \
+    && dnf clean all
+
+ENV TERM=xterm-256color
+
+WORKDIR /app
+RUN mkdir -p /app/bind
+
+CMD ["bash"]
