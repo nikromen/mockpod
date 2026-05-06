@@ -19,6 +19,15 @@ class TestBasePodmanArgs:
         assert "run" in args
         assert "--rm" in args
         assert "--privileged" in args
+
+    def test_krun_no_userns_keep_id(self, tmp_path: Path) -> None:
+        config = MockpodConfig()
+        args = _base_podman_args(config, tmp_path)
+        assert "--userns=keep-id" not in args
+
+    def test_unsafe_has_userns_keep_id(self, tmp_path: Path) -> None:
+        config = MockpodConfig()
+        args = _base_podman_args(config, tmp_path, unsafe=True)
         assert "--userns=keep-id" in args
 
     def test_krun_runtime_default(self, tmp_path: Path) -> None:
@@ -102,23 +111,32 @@ class TestBasePodmanArgs:
 
 
 class TestBuildImage:
+    @patch("mockpod.container._require_podman")
     @patch("mockpod.container._image_exists", return_value=True)
     @patch("subprocess.run")
-    def test_skips_if_exists(self, mock_run: MagicMock, mock_exists: MagicMock) -> None:
+    def test_skips_if_exists(
+        self, mock_run: MagicMock, mock_exists: MagicMock, _mock_req: MagicMock
+    ) -> None:
         config = MockpodConfig()
         build_image(config, force=False)
         mock_run.assert_not_called()
 
+    @patch("mockpod.container._require_podman")
     @patch("mockpod.container._image_exists", return_value=False)
     @patch("subprocess.run")
-    def test_builds_if_missing(self, mock_run: MagicMock, mock_exists: MagicMock) -> None:
+    def test_builds_if_missing(
+        self, mock_run: MagicMock, mock_exists: MagicMock, _mock_req: MagicMock
+    ) -> None:
         config = MockpodConfig()
         build_image(config, force=False)
         mock_run.assert_called_once()
 
+    @patch("mockpod.container._require_podman")
     @patch("mockpod.container._image_exists", return_value=True)
     @patch("subprocess.run")
-    def test_force_rebuild(self, mock_run: MagicMock, mock_exists: MagicMock) -> None:
+    def test_force_rebuild(
+        self, mock_run: MagicMock, mock_exists: MagicMock, _mock_req: MagicMock
+    ) -> None:
         config = MockpodConfig()
         build_image(config, force=True)
         mock_run.assert_called_once()

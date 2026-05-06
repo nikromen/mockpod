@@ -23,17 +23,19 @@ def update_repo_symlinks(repo_path: Path) -> None:
     Symlinks latest RPMs directly into the repository directory so that
     createrepo_c metadata paths match the file:// URLs mock will use.
     Uses relative paths so links work both on host and inside the container.
+
+    Safe for concurrent callers: stale symlinks and races are tolerated.
     """
     _clean_rpm_symlinks(repo_path)
 
     rpms = _collect_latest_rpms(repo_path)
     for rpm in rpms:
         link = repo_path / rpm.name
-        if not link.exists():
-            rel_target = rpm.resolve().relative_to(repo_path.resolve())
-            logger.debug("Creating RPM symlink: %s -> %s", link, rel_target)
+        rel_target = rpm.resolve().relative_to(repo_path.resolve())
+        try:
             link.symlink_to(rel_target)
-        else:
+            logger.debug("Creating RPM symlink: %s -> %s", link, rel_target)
+        except FileExistsError:
             logger.debug("RPM symlink already exists: %s", link)
 
 
@@ -41,7 +43,10 @@ def _clean_rpm_symlinks(repo_path: Path) -> None:
     for f in repo_path.iterdir():
         if f.is_symlink() and f.name.endswith(".rpm"):
             logger.debug("Removing old RPM symlink: %s", f)
-            f.unlink()
+            try:
+                f.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _collect_latest_rpms(repo_path: Path) -> list[Path]:
