@@ -11,12 +11,11 @@ import click
 from mockpod.cache import needs_rebuild, save_hash
 from mockpod.container import ensure_image, podman_run
 from mockpod.repo import (
-    generate_repo_file,
     prune_package_builds,
     update_latest_symlink_build,
     update_repo_symlinks,
 )
-from mockpod.shell import assign, cmd, pipe, var, write_file
+from mockpod.shell import assign, cmd, pipe, var
 
 if TYPE_CHECKING:
     from mockpod.cli import Context
@@ -75,8 +74,7 @@ def _build_commands_for_spec(
     package_path: Path,
     project_root: Path,
     staging_dir: str,
-    repo_file: str,
-    repo_content: str,
+    local_repo_url: str,
     mock_base_args: list[str],
     *,
     srpm_only: bool = False,
@@ -87,9 +85,6 @@ def _build_commands_for_spec(
 
     commands = [
         cmd("mkdir", "-p", staging_dir, sources_dir),
-        write_file(repo_content, repo_file),
-        # copy everything except the spec file to the sources directory
-        # link it to the sources directory
         cmd(
             "find",
             str(pkg_dir),
@@ -107,9 +102,7 @@ def _build_commands_for_spec(
             f"{sources_dir}/",
             ";",
         ),
-        # download the sources from the spec file
         cmd("spectool", "-g", "-C", sources_dir, str(spec_rel)),
-        # build the SRPM
         cmd(
             "mock",
             *mock_base_args,
@@ -121,7 +114,6 @@ def _build_commands_for_spec(
     ]
 
     if not srpm_only:
-        # find the SRPM
         commands.append(
             assign(
                 "SRPM",
@@ -131,7 +123,6 @@ def _build_commands_for_spec(
                 ),
             )
         )
-        # build the binary RPMs
         commands.append(
             cmd(
                 "mock",
@@ -139,7 +130,7 @@ def _build_commands_for_spec(
                 "--rebuild",
                 var("SRPM"),
                 f"--resultdir={staging_dir}",
-                f"--addrepo={repo_file}",
+                f"--addrepo={local_repo_url}",
             )
         )
 
@@ -173,13 +164,7 @@ def run_build(
 
     staging_name = f".{package}-staging"
     staging_dir = f"/results/{chroot}/{staging_name}"
-    repo_file = f"/tmp/mockpod-local-{chroot}.repo"
-    repo_content = generate_repo_file(
-        f"file:///results/{chroot}",
-        repo_id="local-deps",
-        name="Local mockpod repo",
-        priority=1,
-    )
+    local_repo_url = f"file:///results/{chroot}"
     mock_base_args = _build_mock_base_args(
         ctx.config,
         chroot,
@@ -187,7 +172,8 @@ def run_build(
         extra_mock_args=extra_mock_args,
     )
 
-    createrepo_cmd = cmd("createrepo_c", f"/results/{chroot}")
+    repo_dir = f"/results/{chroot}"
+    createrepo_cmd = f"flock /results/.createrepo-{chroot}.lock " + cmd("createrepo_c", repo_dir)
 
     if package_path.name.endswith(".src.rpm"):
         if srpm_only:
@@ -198,14 +184,13 @@ def run_build(
         commands = [
             createrepo_cmd,
             cmd("mkdir", "-p", staging_dir),
-            write_file(repo_content, repo_file),
             cmd(
                 "mock",
                 *mock_base_args,
                 "--rebuild",
                 str(srpm_rel),
                 f"--resultdir={staging_dir}",
-                f"--addrepo={repo_file}",
+                f"--addrepo={local_repo_url}",
             ),
         ]
     else:
@@ -213,8 +198,7 @@ def run_build(
             package_path,
             ctx.project_root,
             staging_dir,
-            repo_file,
-            repo_content,
+            local_repo_url,
             mock_base_args,
             srpm_only=srpm_only,
         )
@@ -227,6 +211,7 @@ def run_build(
         host_mock_config=ctx.host_mock_config,
         host_mounts=ctx.host_mounts,
         unsafe=ctx.unsafe,
+        cache_tag=package,
     )
 
     if rc != 0:
@@ -241,6 +226,7 @@ def run_build(
                 host_mock_config=ctx.host_mock_config,
                 host_mounts=ctx.host_mounts,
                 unsafe=ctx.unsafe,
+                cache_tag=package,
             )
         return rc
 
@@ -294,10 +280,14 @@ def run_build(
         podman_run(
             ctx.config,
             ctx.project_root,
-            [cmd("createrepo_c", f"/results/{chroot}")],
+            [
+                f"flock /results/.createrepo-{chroot}.lock "
+                + cmd("createrepo_c", f"/results/{chroot}")
+            ],
             host_mock_config=ctx.host_mock_config,
             host_mounts=ctx.host_mounts,
             unsafe=ctx.unsafe,
+            cache_tag=package,
         )
 
     click.echo(f"{package}: {'SRPM built' if srpm_only else 'RPMs built'} successfully")
@@ -314,6 +304,7 @@ def run_build(
             host_mock_config=ctx.host_mock_config,
             host_mounts=ctx.host_mounts,
             unsafe=ctx.unsafe,
+            cache_tag=package,
         )
 
     return 0

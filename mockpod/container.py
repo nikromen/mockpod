@@ -90,6 +90,7 @@ def _base_podman_args(
     host_mock_config: bool = False,
     host_mounts: bool = False,
     unsafe: bool = False,
+    cache_tag: str | None = None,
 ) -> list[str]:
     args = [
         "podman",
@@ -101,10 +102,18 @@ def _base_podman_args(
     if not unsafe:
         args.append("--network=pasta:--map-guest-addr,none")
         args.extend(["--runtime", "krun"])
+    else:
+        # keep-id is only safe without krun; krun's virtiofs passthrough
+        # does not translate user-namespace UIDs, so root-owned overlay
+        # files become inaccessible.
+        args.append("--userns=keep-id")
+
+    vol = cache_volume_name(config, project_root)
+    if cache_tag:
+        vol = f"{vol}-{re.sub(r'[^a-zA-Z0-9._-]', '-', cache_tag).strip('-.')}"
 
     args.extend(
         [
-            "--userns=keep-id",
             "--security-opt",
             "label=disable",
             "-v",
@@ -112,7 +121,7 @@ def _base_podman_args(
             "-v",
             f"{config.resolved_artifacts_dir(project_root)}:/results:rw",
             "-v",
-            f"{cache_volume_name(config, project_root)}:/var/lib/mock",
+            f"{vol}:/var/lib/mock",
         ]
     )
 
@@ -165,6 +174,7 @@ def podman_run(
     host_mounts: bool = False,
     unsafe: bool = False,
     dry_run: bool = False,
+    cache_tag: str | None = None,
 ) -> int:
     args = _base_podman_args(
         config,
@@ -173,6 +183,7 @@ def podman_run(
         host_mock_config=host_mock_config,
         host_mounts=host_mounts,
         unsafe=unsafe,
+        cache_tag=cache_tag,
     )
 
     if not commands:
@@ -181,9 +192,9 @@ def podman_run(
         else:
             args.extend(["/bin/bash", "-c", _wrap_with_hardening("exec /bin/bash")])
     else:
-        entry = " && ".join(commands)
+        entry = "; ".join(commands)
         if unsafe:
-            args.extend(["/bin/bash", "-c", entry])
+            args.extend(["/bin/bash", "-c", f"set -e; {entry}"])
         else:
             args.extend(["/bin/bash", "-c", _wrap_with_hardening(entry)])
 
@@ -195,10 +206,19 @@ def podman_run(
 
 
 def _wrap_with_hardening(user_commands: str) -> str:
-    """Prepend iptables hardening as root, then drop to builder user."""
-    hardening = " && ".join(NETWORK_HARDENING_CMDS)
+    """Prepend iptables hardening as root, then drop to builder user.
+
+    Uses ``;`` instead of ``&&`` to avoid libkrun's broken ``\\u``
+    unescaping which corrupts ``&`` characters.  Hardening rules are
+    best-effort (krun VMs lack netfilter); the actual build command
+    runs under ``set -e``.
+    """
+    hardening = "; ".join(f"{c} 2>/dev/null || true" for c in NETWORK_HARDENING_CMDS)
     runuser = cmd("runuser", "-u", "builder", "--", "/bin/bash", "-c", user_commands)
-    return f"{hardening} && {runuser}"
+    return (
+        f"{hardening}; chown -R builder:builder /results; set -e; "
+        f"{runuser}; rc=$?; chown -R root:root /results; exit $rc"
+    )
 
 
 def _run_with_signals(args: list[str], *, interactive: bool = False) -> int:
