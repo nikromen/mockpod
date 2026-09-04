@@ -13,3 +13,4 @@ htmlcov/
 .mockpod/
 packit-build/
 *.rpm
+node_modules/
